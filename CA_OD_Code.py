@@ -1,58 +1,59 @@
 import pandas as pd
 import requests
 import io
+import os
 
 # --- CONFIGURATION ---
-import os
-API_KEY = os.getenv("GitCAL_OD_Map_API_KEY")
+API_KEY = os.getenv("DW_API_KEY")
 CHART_ID = "bodZ9"
 
-# Link to the "Death Profiles by County" CSV on CHHS Portal
-# We are using the 2025-2026 Provisional data for the most current weekly updates
-DATA_URL = "https://data.chhs.ca.gov/dataset/death-profiles-by-county/resource/0dc57617-ddfa-4e90-a47d-264cf211730e/download/chsp_2024_odp.csv"
+# Updated to the 2025-2026 Provisional Monthly Death Profiles
+DATA_URL = "https://data.chhs.ca.gov/dataset/death-profiles-by-county/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/provisional_deaths_by_month_by_county.csv"
 
 def update_map():
     try:
-        # 1. Fetch the data
-        print("Downloading latest California overdose data...")
+        print("Downloading latest CHHS data...")
         response = requests.get(DATA_URL)
         df = pd.read_csv(io.StringIO(response.text))
 
-        # 2. Filter for "All Drug Overdose" and the most recent year/timeframe
-        # Note: 'Indicator' names vary slightly; this filters for the primary 'All' category
-        all_overdoses = df[df['Indicator'].str.contains('All Drug Overdose', case=False, na=False)]
+        # NEW FILTER LOGIC: 
+        # In the 2025/26 data, we look for 'Drug Overdose' in the Cause_Desc
+        # We also want to sum the months to get a yearly total per county
+        mask = df['Cause_Desc'].str.contains('Drug overdose', case=False, na=False)
+        overdose_df = df[mask].copy()
+
+        if overdose_df.empty:
+            print("Warning: No data found matching 'Drug overdose'. Checking column names...")
+            print(f"Columns available: {df.columns.tolist()}")
+            return
+
+        # Group by County and sum the 'Count' column
+        # This ensures we get a total for the year-to-date
+        map_data = overdose_df.groupby('County')['Count'].sum().reset_index()
+        map_data.columns = ['County', 'Total Deaths']
+
+        print(f"Uploading {len(map_data)} counties to Datawrapper...")
         
-        # 3. Clean and Format for Datawrapper
-        # We need a 'County' column and a 'Value' column
-        final_df = all_overdoses[['County', 'Rate/Percentage']].copy()
-        final_df.columns = ['County', 'Death Rate']
-        
-        # 4. Upload to Datawrapper
-        print(f"Uploading to Datawrapper chart {CHART_ID}...")
         headers = {
             "Authorization": f"Bearer {API_KEY}",
             "Content-Type": "text/csv"
         }
         
-        payload = final_df.to_csv(index=False)
+        csv_payload = map_data.to_csv(index=False)
         update_res = requests.put(
             f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data",
             headers=headers,
-            data=payload
+            data=csv_payload
         )
 
         if update_res.status_code == 204:
-            # 5. Publish the chart so changes are visible
-            publish_res = requests.post(
-                f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", 
-                headers=headers
-            )
-            print("Successfully updated and published the map!")
+            requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
+            print("Success! Data updated and chart re-published.")
         else:
-            print(f"Upload failed: {update_res.status_code} - {update_res.text}")
+            print(f"Failed to upload: {update_res.text}")
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     update_map()
