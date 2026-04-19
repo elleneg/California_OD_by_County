@@ -4,7 +4,7 @@ import io
 import os
 
 # --- CONFIGURATION ---
-API_KEY = os.getenv("DW_API_KEY")
+API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
 CHART_ID = "bodZ9"
 DATA_URL = "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/2026-03_deaths_provisional_county_month_sup.csv"
 
