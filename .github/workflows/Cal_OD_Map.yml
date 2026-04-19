@@ -1,4 +1,4 @@
-name: Weekly Map Update
+name: CA_OD_WEEKLY_UPDATE
 
 on:
   schedule:
