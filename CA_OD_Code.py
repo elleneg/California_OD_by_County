@@ -6,49 +6,42 @@ import os
 # --- CONFIGURATION ---
 API_KEY = os.getenv("DW_API_KEY")
 CHART_ID = "bodZ9"
-DATA_URL = "https://data.chhs.ca.gov/dataset/death-profiles-by-county/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/provisional_deaths_by_month_by_county.csv"
+
+# This is the DIRECT link to the 2026 Provisional CSV file
+DATA_URL = "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/2026-03_deaths_provisional_county_month_sup.csv"
 
 def update_map():
     try:
-        print("Fetching data from CHHS...")
-        r = requests.get(DATA_URL)
+        print("Fetching direct CSV from CHHS...")
+        response = requests.get(DATA_URL)
         
-        # We add 'on_bad_lines' and 'skiprows' to handle government file formatting
-        # If line 7 has the error, the data usually starts right after the header junk
-        try:
-            df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip')
-        except:
-            # Plan B: If standard reading fails, try skipping the first 5 rows of titles
-            df = pd.read_csv(io.StringIO(r.text), skiprows=5, on_bad_lines='skip')
+        # Load data (using 'on_bad_lines' to handle any state disclaimer rows)
+        df = pd.read_csv(io.StringIO(response.text), on_bad_lines='skip')
+        print(f"Success! Found columns: {df.columns.tolist()}")
 
-        # Cleanup: Remove any rows that are completely empty
-        df = df.dropna(how='all')
+        # 1. Filter for Drug Overdose only
+        # The column is 'Cause_Desc' and we want rows containing 'overdose'
+        mask = df['Cause_Desc'].str.contains('overdose', case=False, na=False)
+        overdose_df = df[mask].copy()
 
-        print(f"Columns found: {df.columns.tolist()}")
-
-        # Search for overdose deaths. The state often uses 'Drug Overdose' or 'OD'
-        # We look in Cause_Desc or Indicator columns
-        column_to_check = 'Cause_Desc' if 'Cause_Desc' in df.columns else df.columns[1]
-        
-        mask = df[column_to_check].str.contains('overdose', case=False, na=False)
-        filtered_df = df[mask].copy()
-
-        if filtered_df.empty:
-            print("❌ No overdose data found in the filtered rows.")
+        if overdose_df.empty:
+            print("❌ No rows found for 'Drug overdose'. Check Cause_Desc sample:")
+            print(df['Cause_Desc'].unique()[:5])
             return
 
-        # Sum by County
-        # Note: If the column is named 'Occurrence_County' or just 'County', we find it here
-        county_col = 'County' if 'County' in df.columns else 'Occurrence_County'
-        count_col = 'Count' if 'Count' in df.columns else 'Number_of_Deaths'
+        # 2. Total the counts by County
+        # This dataset has monthly rows; we sum them to get the year-to-date total
+        map_data = overdose_df.groupby('County')['Count'].sum().reset_index()
+        map_data.columns = ['County', 'Total Deaths']
 
-        map_data = filtered_df.groupby(county_col)[count_col].sum().reset_index()
-        map_data.columns = ['County', 'Total Overdose Deaths']
+        print(f"✅ Prepared data for {len(map_data)} counties.")
 
-        print(f"✅ Found {len(map_data)} counties.")
-
-        # Push to Datawrapper
-        headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
+        # 3. Upload to Datawrapper
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "text/csv"
+        }
+        
         upload_res = requests.put(
             f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data",
             headers=headers,
@@ -56,10 +49,11 @@ def update_map():
         )
 
         if upload_res.status_code == 204:
+            # 4. Re-publish to make it live
             requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
-            print("🚀 Map successfully updated!")
+            print("🚀 Map successfully updated and published!")
         else:
-            print(f"❌ Upload failed: {upload_res.status_code}")
+            print(f"❌ Datawrapper Upload Failed: {upload_res.text}")
 
     except Exception as e:
         print(f"❌ Script Error: {e}")
