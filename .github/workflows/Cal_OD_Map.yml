@@ -22,5 +22,5 @@ jobs:
 
       - name: Run the update script
         env:
-          DW_API_KEY: ${{ secrets.DW_API_KEY }}
+          CAL_OD_DATAWRAPPER: ${{ secrets.CAL_OD_DATAWRAPPER }}
         run: python CA_OD_Code.py
