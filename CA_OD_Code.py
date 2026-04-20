@@ -5,7 +5,7 @@ import os
 
 # --- CONFIGURATION ---
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "bodZ9"
+CHART_ID = "PASTE_YOUR_NEW_CHART_ID_HERE" # Update this!
 
 URLS = {
     2021: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/6645396b-285b-4c2c-8833-2fa64757523f/download/2021-12_deaths_provisional_county_month_sup.csv",
@@ -26,46 +26,37 @@ def update_map():
         try:
             print(f"Processing {year}...")
             r = requests.get(url)
-            # engine='python' and on_bad_lines handles the ParserError
             df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip', engine='python')
             
-            mask = (df['Cause_Desc'].str.contains('Accidents', case=False, na=False)) & (df['County'] != 'California')
-            filtered = df[mask].copy()
-            filtered['Count'] = pd.to_numeric(filtered['Count'], errors='coerce')
+            # Normalize column names (remove spaces, underscores, and make lowercase)
+            df.columns = [c.replace(' ', '_').lower() for c in df.columns]
             
-            yearly = filtered.groupby('County')['Count'].sum(min_count=1).reset_index()
-            yearly['Year'] = f"'{year}" # Adding a tick mark forces Datawrapper to see it as Text
+            # Use the normalized 'cause_desc' and 'county'
+            mask = (df['cause_desc'].str.contains('Accidents', case=False, na=False)) & (df['county'] != 'California')
+            filtered = df[mask].copy()
+            filtered['count'] = pd.to_numeric(filtered['count'], errors='coerce')
+            
+            yearly = filtered.groupby('county')['count'].sum(min_count=1).reset_index()
+            yearly['Year'] = str(year)
             all_years_data.append(yearly)
         except Exception as e:
-            print(f"Skipping {year} due to error: {e}")
+            print(f"❌ Failed year {year}: {e}")
 
     final_df = pd.concat(all_years_data)
-    final_df['Population'] = final_df['County'].map(POPS)
-    final_df['Rate'] = (final_df['Count'] / final_df['Population']) * 100000
-    export_df = final_df[['County', 'Year', 'Rate', 'Count']].round(2)
+    final_df['Population'] = final_df['county'].map(POPS)
+    final_df['Rate'] = (final_df['count'] / final_df['Population']) * 100000
+    export_df = final_df[['county', 'Year', 'Rate', 'count']].round(2)
     export_df.columns = ['County', 'Year', 'Death Rate', 'Total Deaths']
 
     headers = {"Authorization": f"Bearer {API_KEY}"}
-    
-    # Force metadata reset to ensure column matching isn't locked to 12 characters
-    reset_payload = {
-        "metadata": {
-            "data": {
-                "horizontal-header": True,
-                "column-format": {},
-                "source-type": "uploaded-csv"
-            }
-        }
-    }
-    requests.patch(f"https://api.datawrapper.de/v3/charts/{CHART_ID}", headers=headers, json=reset_payload)
-
-    # Upload Data
     csv_data = export_df.to_csv(index=False)
+    
+    # Upload to Datawrapper
     requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
                  headers={**headers, "Content-Type": "text/csv"}, data=csv_data)
     
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
-    print("🚀 Success! Historical data is in.")
+    print("🚀 All years processed and synced to new chart!")
 
 if __name__ == "__main__":
     update_map()
