@@ -4,7 +4,7 @@ import io
 import os
 
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "kF18a" # Keep your new 5-character ID here
+CHART_ID = "YOUR_NEW_ID" # Make sure your 5-character ID is here
 
 URLS = [
     "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/579cc04a-52d6-4c4c-b2df-ad901c9049b7/download/20260319_deaths_final_2014-2024_county_year_sup.csv",
@@ -20,7 +20,7 @@ def update_map():
     r1 = requests.get(URLS[0])
     df_final = pd.read_csv(io.StringIO(r1.text))
     
-    # Apply your specific filters to reduce row count immediately
+    # Filter for Total Population and Accidents
     df_final = df_final[
         (df_final['Gender'] == 'Total Population') & 
         (df_final['Cause_Desc'].str.contains('Accidents', na=False))
@@ -30,7 +30,7 @@ def update_map():
     r2 = requests.get(URLS[1])
     df_prov = pd.read_csv(io.StringIO(r2.text))
     
-    # Same filters for the provisional file
+    # Apply same filters
     df_prov = df_prov[
         (df_prov['Gender'] == 'Total Population') & 
         (df_prov['Cause_Desc'].str.contains('Accidents', na=False))
@@ -38,5 +38,7 @@ def update_map():
     
     # Standardize and Combine
     df_final = df_final[['County', 'Year', 'Count']]
-    # For provisional, we sum the months to get the year total
-    df_prov = df_prov.groupby(['County', 'Year
+    df_prov = df_prov.groupby(['County', 'Year'])['Count'].sum().reset_index()
+    
+    combined = pd.concat([df_final, df_prov])
+    combined = combined[(combined['
