@@ -4,7 +4,7 @@ import io
 import os
 
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "YOUR_NEW_ID" # Ensure your new 5-character ID is here
+CHART_ID = "YOUR_NEW_ID" # Ensure your 5-character ID is here
 
 URLS = [
     "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/579cc04a-52d6-4c4c-b2df-ad901c9049b7/download/20260319_deaths_final_2014-2024_county_year_sup.csv",
@@ -15,45 +15,54 @@ POPS = {
     'Alameda': 1628997, 'Alpine': 1159, 'Amador': 41412, 'Butte': 207183, 'Calaveras': 46332, 'Colusa': 22036, 'Contra Costa': 1155025, 'Del Norte': 27082, 'El Dorado': 193221, 'Fresno': 1017162, 'Glenn': 28805, 'Humboldt': 133985, 'Imperial': 179331, 'Inyo': 18839, 'Kern': 917673, 'Kings': 153443, 'Lake': 68140, 'Lassen': 28861, 'Los Angeles': 9663345, 'Madera': 160222, 'Marin': 254407, 'Mariposa': 17147, 'Mendocino': 90310, 'Merced': 291920, 'Modoc': 8500, 'Mono': 13066, 'Monterey': 430723, 'Napa': 133216, 'Nevada': 102037, 'Orange': 3135757, 'Placer': 417772, 'Plumas': 19131, 'Riverside': 2473931, 'Sacramento': 1588921, 'San Benito': 68175, 'San Bernardino': 2195611, 'San Diego': 3269973, 'San Francisco': 808988, 'San Joaquin': 800965, 'San Luis Obispo': 281635, 'San Mateo': 726353, 'Santa Barbara': 441257, 'Santa Clara': 1877592, 'Santa Cruz': 261547, 'Shasta': 180366, 'Sierra': 3217, 'Siskiyou': 43660, 'Solano': 449218, 'Sonoma': 481812, 'Stanislaus': 552999, 'Sutter': 97948, 'Tehama': 65498, 'Trinity': 15670, 'Tulare': 479401, 'Tuolumne': 54539, 'Ventura': 829749, 'Yolo': 216110, 'Yuba': 84310
 }
 
+def clean_and_filter(df):
+    # Normalize all column names to lowercase and strip spaces
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    
+    # Dynamically find the columns we need
+    col_gender = [c for c in df.columns if 'gender' in c or 'sex' in c][0]
+    col_cause = [c for c in df.columns if 'cause' in c][0]
+    col_county = [c for c in df.columns if 'county' in c][0]
+    col_year = [c for c in df.columns if 'year' in c][0]
+    col_count = [c for c in df.columns if 'count' in c and 'desc' not in c][0]
+
+    # Apply filters
+    mask = (
+        (df[col_gender].str.contains('Total', case=False, na=False)) & 
+        (df[col_cause].str.contains('Accidents', case=False, na=False)) &
+        (df[col_county].str.lower() != 'california')
+    )
+    df = df[mask].copy()
+    
+    # Return a standardized version
+    df = df[[col_county, col_year, col_count]]
+    df.columns = ['County', 'Year', 'Count']
+    df['Count'] = pd.to_numeric(df['Count'], errors='coerce')
+    return df
+
 def update_map():
-    # 1. Process Final Data (2014-2024)
-    r1 = requests.get(URLS[0])
-    df_final = pd.read_csv(io.StringIO(r1.text))
+    processed_dfs = []
+    for url in URLS:
+        print(f"Fetching: {url}")
+        r = requests.get(url)
+        # Use low_memory=False to handle the Mixed Types warning
+        df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+        processed_dfs.append(clean_and_filter(df))
+
+    # Combine
+    combined = pd.concat(processed_dfs)
     
-    # Strict filtering for Total Population and the exact Accident string
-    df_final = df_final[
-        (df_final['Gender'] == 'Total Population') & 
-        (df_final['Cause_Desc'].str.contains('Accidents', na=False))
-    ].copy()
+    # Final grouping (sums provisional months into years)
+    combined = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
     
-    # 2. Process Provisional Data (2025-2026)
-    r2 = requests.get(URLS[1])
-    df_prov = pd.read_csv(io.StringIO(r2.text))
-    
-    # Same filters for provisional
-    df_prov = df_prov[
-        (df_prov['Gender'] == 'Total Population') & 
-        (df_prov['Cause_Desc'].str.contains('Accidents', na=False))
-    ].copy()
-    
-    # Aggregate and combine
-    df_final = df_final[['County', 'Year', 'Count']]
-    df_prov = df_prov.groupby(['County', 'Year'])['Count'].sum().reset_index()
-    
-    combined = pd.concat([df_final, df_prov])
-    
-    # Filter for County list (removing 'California' total) and Years 2021+
-    combined = combined[
-        (combined['County'] != 'California') & 
-        (combined['Year'] >= 2021)
-    ].copy()
+    # Filter for 2021+
+    combined = combined[combined['Year'] >= 2021].copy()
     
     # Calculate Rates
-    combined['Count'] = pd.to_numeric(combined['Count'], errors='coerce')
     combined['Population'] = combined['County'].map(POPS)
     combined['Death Rate'] = (combined['Count'] / combined['Population'] * 100000).round(2)
     
-    # Prepare for Datawrapper
+    # Format for Datawrapper
     final_output = combined[['County', 'Year', 'Death Rate', 'Count']]
     final_output['Year'] = final_output['Year'].astype(str)
 
@@ -61,7 +70,7 @@ def update_map():
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
     requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=final_output.to_csv(index=False))
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
-    print(f"🚀 Success! Map updated with {len(final_output)} clean rows.")
+    print(f"🚀 SUCCESS! Processed {len(final_output)} rows.")
 
 if __name__ == "__main__":
     update_map()
