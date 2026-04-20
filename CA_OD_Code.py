@@ -4,7 +4,7 @@ import io
 import os
 
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "kF18a" # Ensure your 5-character ID is here
+CHART_ID = "kF18a" 
 
 URLS = [
     "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/579cc04a-52d6-4c4c-b2df-ad901c9049b7/download/20260319_deaths_final_2014-2024_county_year_sup.csv",
@@ -16,25 +16,24 @@ POPS = {
 }
 
 def clean_and_filter(df):
-    # Normalize all column names to lowercase and strip spaces
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    # Strip spaces from column names to prevent hidden "KeyErrors"
+    df.columns = [c.strip() for c in df.columns]
     
-    # Dynamically find the columns we need
-    col_gender = [c for c in df.columns if 'gender' in c or 'sex' in c][0]
-    col_cause = [c for c in df.columns if 'cause' in c][0]
-    col_county = [c for c in df.columns if 'county' in c][0]
-    col_year = [c for c in df.columns if 'year' in c][0]
-    col_count = [c for c in df.columns if 'count' in c and 'desc' not in c][0]
+    # Use the names you identified: "Strata" and "Cause_Desc"
+    # We use a flexible check in case one file uses "Strata" and another uses "Gender"
+    col_strata = [c for c in df.columns if c.lower() in ['strata', 'gender', 'sex']][0]
+    col_cause = [c for c in df.columns if 'cause' in c.lower()][0]
+    col_county = [c for c in df.columns if 'county' in c.lower()][0]
+    col_year = [c for c in df.columns if 'year' in c.lower()][0]
+    col_count = [c for c in df.columns if 'count' in c.lower() and 'desc' not in c.lower()][0]
 
-    # Apply filters
     mask = (
-        (df[col_gender].str.contains('Total', case=False, na=False)) & 
+        (df[col_strata].str.contains('Total Population', case=False, na=False)) & 
         (df[col_cause].str.contains('Accidents', case=False, na=False)) &
         (df[col_county].str.lower() != 'california')
     )
     df = df[mask].copy()
     
-    # Return a standardized version
     df = df[[col_county, col_year, col_count]]
     df.columns = ['County', 'Year', 'Count']
     df['Count'] = pd.to_numeric(df['Count'], errors='coerce')
@@ -43,26 +42,23 @@ def clean_and_filter(df):
 def update_map():
     processed_dfs = []
     for url in URLS:
-        print(f"Fetching: {url}")
         r = requests.get(url)
-        # Use low_memory=False to handle the Mixed Types warning
+        # Handle mixed types and messy historical data
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
         processed_dfs.append(clean_and_filter(df))
 
-    # Combine
     combined = pd.concat(processed_dfs)
     
-    # Final grouping (sums provisional months into years)
+    # Final grouping (sums provisional months into year totals)
     combined = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
     
-    # Filter for 2021+
+    # Filter for 2021 and ongoing as requested
     combined = combined[combined['Year'] >= 2021].copy()
     
-    # Calculate Rates
+    # Calculate Rates per 100k
     combined['Population'] = combined['County'].map(POPS)
     combined['Death Rate'] = (combined['Count'] / combined['Population'] * 100000).round(2)
     
-    # Format for Datawrapper
     final_output = combined[['County', 'Year', 'Death Rate', 'Count']]
     final_output['Year'] = final_output['Year'].astype(str)
 
@@ -70,7 +66,7 @@ def update_map():
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
     requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=final_output.to_csv(index=False))
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
-    print(f"🚀 SUCCESS! Processed {len(final_output)} rows.")
+    print(f"🚀 Success! Your map is updated with your specific Strata filters.")
 
 if __name__ == "__main__":
     update_map()
