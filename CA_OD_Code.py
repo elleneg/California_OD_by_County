@@ -3,8 +3,9 @@ import requests
 import io
 import os
 
+# Configuration
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "kF18a" 
+CHART_ID = "kF18a" # Update this with your 5-character ID
 
 URLS = [
     "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/579cc04a-52d6-4c4c-b2df-ad901c9049b7/download/20260319_deaths_final_2014-2024_county_year_sup.csv",
@@ -16,58 +17,70 @@ POPS = {
 }
 
 def update_map():
-    all_data = []
+    all_rows = []
     
     for url in URLS:
-        print(f"Reading data from: {url}")
+        print(f"Fetching data from: {url}")
         r = requests.get(url)
-        # Use low_memory=False to stop the pandas mixed-type warnings seen in previous logs
+        # low_memory=False handles the mixed-type warning for large files
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
         
-        # Clean up column names just in case there are leading/trailing spaces
+        # Clean column names
         df.columns = [c.strip() for c in df.columns]
 
         # Apply your exact filters
-        # Note: We use .str.strip() on the values too to ensure a perfect match
         mask = (
             (df['Strata'].str.strip() == 'Total Population') & 
             (df['Cause_Desc'].str.strip() == 'Accidents (unintentional injuries)')
         )
-        filtered_df = df[mask].copy()
+        filtered = df[mask].copy()
         
-        print(f"Found {len(filtered_df)} rows in this file.")
-        all_data.append(filtered_df)
+        # Keep only what we need for the pivot
+        filtered = filtered[['County', 'Year', 'Count']]
+        all_rows.append(filtered)
 
-    # Combine the data
-    combined = pd.concat(all_data)
-    
-    # Ensure columns are standardized
-    combined = combined[['County', 'Year', 'Count']]
+    # Combine historical and provisional
+    combined = pd.concat(all_rows)
     combined['Count'] = pd.to_numeric(combined['Count'], errors='coerce')
     
-    # Sum up counts by County and Year (especially important for provisional monthly data)
-    final = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
+    # Sum counts by County and Year (merges monthly provisional data into year totals)
+    summed = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
     
-    # Filter for 2021+ as requested
-    final = final[final['Year'] >= 2021].copy()
+    # Filter for 2021 onwards
+    summed = summed[summed['Year'] >= 2021].copy()
     
     # Calculate Death Rate
-    final['Population'] = final['County'].map(POPS)
-    final['Death Rate'] = (final['Count'] / final['Population'] * 100000).round(2)
+    summed['Population'] = summed['County'].map(POPS)
+    summed['Death Rate'] = (summed['Count'] / summed['Population'] * 100000).round(2)
     
-    # Drop rows without population (like 'California' total)
-    final = final.dropna(subset=['Population'])
-    
-    # Final data for Datawrapper
-    output = final[['County', 'Year', 'Death Rate', 'Count']]
-    output['Year'] = output['Year'].astype(str)
+    # Remove 'California' total and any NaN counties
+    summed = summed.dropna(subset=['Population'])
+    summed = summed[summed['County'] != 'California']
 
-    # Standard upload and publish
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
-    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=output.to_csv(index=False))
-    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
+    # --- THE PIVOT STEP ---
+    # This turns the data from "Long" (rows for years) to "Wide" (columns for years)
+    # Resulting columns: [County, 2021, 2022, 2023, 2024, 2025, 2026]
+    final_pivot = summed.pivot(index='County', columns='Year', values='Death Rate')
+    final_pivot = final_pivot.reset_index()
+
+    # Push to Datawrapper
+    headers = {
+        "Authorization": f"Bearer {API_KEY}", 
+        "Content-Type": "text/csv"
+    }
     
-    print(f"🚀 Success! Sent {len(output)} rows to Datawrapper.")
+    csv_data = final_pivot.to_csv(index=False)
+    
+    # Update data
+    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
+                 headers=headers, 
+                 data=csv_data)
+    
+    # Publish chart
+    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", 
+                  headers={"Authorization": f"Bearer {API_KEY}"})
+    
+    print(f"🚀 Success! Map updated. Columns available: {list(final_pivot.columns)}")
 
 if __name__ == "__main__":
     update_map()
