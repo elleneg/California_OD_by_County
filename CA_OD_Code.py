@@ -4,7 +4,7 @@ import io
 import os
 
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "YOUR_NEW_ID" # Make sure this is your NEW 5-character ID
+CHART_ID = "kF18a" # Make sure this is your NEW 5-character ID
 
 # 1. The "Final" historical data you just found
 # 2. The "Provisional" data for current/future years
