@@ -5,12 +5,10 @@ import os
 
 # --- CONFIGURATION ---
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "kF18a" # Keep the quotes!
+CHART_ID = "kF18a" # Make sure this is the new one!
 
+# We are limiting this to the most recent years to ensure it actually works first
 URLS = {
-    2021: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/6645396b-285b-4c2c-8833-2fa64757523f/download/2021-12_deaths_provisional_county_month_sup.csv",
-    2022: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/79704207-6819-48ed-a261-26c71f9f2579/download/2022-12_deaths_provisional_county_month_sup.csv",
-    2023: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/c444053d-2495-4670-bc62-094ec601d331/download/2023-12_deaths_provisional_county_month_sup.csv",
     2024: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/7141887e-d476-46c9-9403-16279f57876a/download/2024-12_deaths_provisional_county_month_sup.csv",
     2025: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/7141887e-d476-46c9-9403-16279f57876a/download/2025-12_deaths_provisional_county_month_sup.csv",
     2026: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/2026-03_deaths_provisional_county_month_sup.csv"
@@ -21,48 +19,40 @@ POPS = {
 }
 
 def update_map():
-    all_years_data = []
+    all_data = []
     for year, url in URLS.items():
-        try:
-            print(f"Processing {year}...")
-            r = requests.get(url)
-            df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip', engine='python')
-            
-            # Find the columns dynamically by searching for keywords
-            col_cause = [c for c in df.columns if 'cause' in c.lower()][0]
-            col_county = [c for c in df.columns if 'county' in c.lower()][0]
-            col_count = [c for c in df.columns if 'count' in c.lower() and 'desc' not in c.lower()][0]
-            
-            mask = (df[col_cause].str.contains('Accidents', case=False, na=False)) & (df[col_county] != 'California')
-            filtered = df[mask].copy()
-            filtered['clean_count'] = pd.to_numeric(filtered[col_count], errors='coerce')
-            
-            yearly = filtered.groupby(col_county)['clean_count'].sum(min_count=1).reset_index()
-            yearly.columns = ['County', 'Count']
-            yearly['Year'] = str(year)
-            all_years_data.append(yearly)
-            print(f"✅ Successfully processed {year}")
-        except Exception as e:
-            print(f"❌ Failed year {year}: {e}")
+        print(f"Trying {year}...")
+        r = requests.get(url)
+        df = pd.read_csv(io.StringIO(r.text))
+        
+        # Hardcoding the column names based on the 2024-2026 file structure
+        df.columns = [c.strip() for c in df.columns]
+        
+        # We search specifically for the Accidents category
+        target_col = 'Cause_Desc' if 'Cause_Desc' in df.columns else 'Cause Desc'
+        county_col = 'County' if 'County' in df.columns else 'COUNTY'
+        count_col = 'Count' if 'Count' in df.columns else 'COUNT'
 
-    if not all_years_data:
-        print("Error: No data was collected!")
-        return
+        filtered = df[df[target_col].str.contains('Accidents', na=False)].copy()
+        filtered[count_col] = pd.to_numeric(filtered[count_col], errors='coerce')
+        
+        summary = filtered.groupby(county_col)[count_col].sum(min_count=1).reset_index()
+        summary.columns = ['County', 'Deaths']
+        summary['Year'] = str(year)
+        all_data.append(summary)
 
-    final_df = pd.concat(all_years_data)
-    final_df['Population'] = final_df['County'].map(POPS)
-    final_df['Rate'] = (final_df['Count'] / final_df['Population']) * 100000
-    export_df = final_df[['County', 'Year', 'Rate', 'Count']].round(2)
-    export_df.columns = ['County', 'Year', 'Death Rate', 'Total Deaths']
-
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-    csv_data = export_df.to_csv(index=False)
+    final_df = pd.concat(all_data)
+    final_df['Pop'] = final_df['County'].map(POPS)
+    final_df['Death Rate'] = (final_df['Deaths'] / final_df['Pop'] * 100000).round(2)
     
-    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
-                 headers={**headers, "Content-Type": "text/csv"}, data=csv_data)
+    # Final data for Datawrapper
+    dw_data = final_df[['County', 'Year', 'Death Rate', 'Deaths']]
     
-    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
-    print("🚀 DONE! Check the new map.")
+    # Send to Datawrapper
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
+    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=dw_data.to_csv(index=False))
+    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
+    print("✅ Done! Check your map now.")
 
 if __name__ == "__main__":
     update_map()
