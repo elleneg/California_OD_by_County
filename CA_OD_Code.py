@@ -23,15 +23,21 @@ POPS = {
 def update_map():
     all_years_data = []
     for year, url in URLS.items():
-        print(f"Processing {year}...")
-        r = requests.get(url)
-        df = pd.read_csv(io.StringIO(r.text))
-        mask = (df['Cause_Desc'].str.contains('Accidents', case=False, na=False)) & (df['County'] != 'California')
-        filtered = df[mask].copy()
-        filtered['Count'] = pd.to_numeric(filtered['Count'], errors='coerce')
-        yearly = filtered.groupby('County')['Count'].sum(min_count=1).reset_index()
-        yearly['Year'] = str(year) # Force year to string
-        all_years_data.append(yearly)
+        try:
+            print(f"Processing {year}...")
+            r = requests.get(url)
+            # engine='python' and on_bad_lines handles the ParserError
+            df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip', engine='python')
+            
+            mask = (df['Cause_Desc'].str.contains('Accidents', case=False, na=False)) & (df['County'] != 'California')
+            filtered = df[mask].copy()
+            filtered['Count'] = pd.to_numeric(filtered['Count'], errors='coerce')
+            
+            yearly = filtered.groupby('County')['Count'].sum(min_count=1).reset_index()
+            yearly['Year'] = f"'{year}" # Adding a tick mark forces Datawrapper to see it as Text
+            all_years_data.append(yearly)
+        except Exception as e:
+            print(f"Skipping {year} due to error: {e}")
 
     final_df = pd.concat(all_years_data)
     final_df['Population'] = final_df['County'].map(POPS)
@@ -41,7 +47,7 @@ def update_map():
 
     headers = {"Authorization": f"Bearer {API_KEY}"}
     
-    # 1. THE RESET: Force metadata to clear out old column constraints
+    # Force metadata reset to ensure column matching isn't locked to 12 characters
     reset_payload = {
         "metadata": {
             "data": {
@@ -53,14 +59,13 @@ def update_map():
     }
     requests.patch(f"https://api.datawrapper.de/v3/charts/{CHART_ID}", headers=headers, json=reset_payload)
 
-    # 2. UPLOAD DATA
+    # Upload Data
     csv_data = export_df.to_csv(index=False)
     requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
                  headers={**headers, "Content-Type": "text/csv"}, data=csv_data)
     
-    # 3. PUBLISH
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
-    print("🚀 Full historical data force-synced!")
+    print("🚀 Success! Historical data is in.")
 
 if __name__ == "__main__":
     update_map()
