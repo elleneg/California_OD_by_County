@@ -4,7 +4,7 @@ import io
 import os
 
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "YOUR_NEW_ID" # Make sure your 5-character ID is here
+CHART_ID = "YOUR_NEW_ID" # Ensure your new 5-character ID is here
 
 URLS = [
     "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/579cc04a-52d6-4c4c-b2df-ad901c9049b7/download/20260319_deaths_final_2014-2024_county_year_sup.csv",
@@ -20,7 +20,7 @@ def update_map():
     r1 = requests.get(URLS[0])
     df_final = pd.read_csv(io.StringIO(r1.text))
     
-    # Filter for Total Population and Accidents
+    # Strict filtering for Total Population and the exact Accident string
     df_final = df_final[
         (df_final['Gender'] == 'Total Population') & 
         (df_final['Cause_Desc'].str.contains('Accidents', na=False))
@@ -30,15 +30,38 @@ def update_map():
     r2 = requests.get(URLS[1])
     df_prov = pd.read_csv(io.StringIO(r2.text))
     
-    # Apply same filters
+    # Same filters for provisional
     df_prov = df_prov[
         (df_prov['Gender'] == 'Total Population') & 
         (df_prov['Cause_Desc'].str.contains('Accidents', na=False))
     ].copy()
     
-    # Standardize and Combine
+    # Aggregate and combine
     df_final = df_final[['County', 'Year', 'Count']]
     df_prov = df_prov.groupby(['County', 'Year'])['Count'].sum().reset_index()
     
     combined = pd.concat([df_final, df_prov])
-    combined = combined[(combined['
+    
+    # Filter for County list (removing 'California' total) and Years 2021+
+    combined = combined[
+        (combined['County'] != 'California') & 
+        (combined['Year'] >= 2021)
+    ].copy()
+    
+    # Calculate Rates
+    combined['Count'] = pd.to_numeric(combined['Count'], errors='coerce')
+    combined['Population'] = combined['County'].map(POPS)
+    combined['Death Rate'] = (combined['Count'] / combined['Population'] * 100000).round(2)
+    
+    # Prepare for Datawrapper
+    final_output = combined[['County', 'Year', 'Death Rate', 'Count']]
+    final_output['Year'] = final_output['Year'].astype(str)
+
+    # Push to Datawrapper
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
+    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=final_output.to_csv(index=False))
+    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
+    print(f"🚀 Success! Map updated with {len(final_output)} clean rows.")
+
+if __name__ == "__main__":
+    update_map()
