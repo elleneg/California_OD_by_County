@@ -15,53 +15,59 @@ POPS = {
     'Alameda': 1628997, 'Alpine': 1159, 'Amador': 41412, 'Butte': 207183, 'Calaveras': 46332, 'Colusa': 22036, 'Contra Costa': 1155025, 'Del Norte': 27082, 'El Dorado': 193221, 'Fresno': 1017162, 'Glenn': 28805, 'Humboldt': 133985, 'Imperial': 179331, 'Inyo': 18839, 'Kern': 917673, 'Kings': 153443, 'Lake': 68140, 'Lassen': 28861, 'Los Angeles': 9663345, 'Madera': 160222, 'Marin': 254407, 'Mariposa': 17147, 'Mendocino': 90310, 'Merced': 291920, 'Modoc': 8500, 'Mono': 13066, 'Monterey': 430723, 'Napa': 133216, 'Nevada': 102037, 'Orange': 3135757, 'Placer': 417772, 'Plumas': 19131, 'Riverside': 2473931, 'Sacramento': 1588921, 'San Benito': 68175, 'San Bernardino': 2195611, 'San Diego': 3269973, 'San Francisco': 808988, 'San Joaquin': 800965, 'San Luis Obispo': 281635, 'San Mateo': 726353, 'Santa Barbara': 441257, 'Santa Clara': 1877592, 'Santa Cruz': 261547, 'Shasta': 180366, 'Sierra': 3217, 'Siskiyou': 43660, 'Solano': 449218, 'Sonoma': 481812, 'Stanislaus': 552999, 'Sutter': 97948, 'Tehama': 65498, 'Trinity': 15670, 'Tulare': 479401, 'Tuolumne': 54539, 'Ventura': 829749, 'Yolo': 216110, 'Yuba': 84310
 }
 
-def clean_and_filter(df):
-    df.columns = [str(c).strip() for c in df.columns]
-    
-    # Identify columns by partial name match to avoid KeyErrors
-    col_strata = [c for c in df.columns if any(x in c.lower() for x in ['strata', 'gender', 'sex'])][0]
-    col_cause = [c for c in df.columns if 'cause' in c.lower()][0]
-    col_county = [c for c in df.columns if 'county' in c.lower()][0]
-    col_year = [c for c in df.columns if 'year' in c.lower()][0]
-    col_count = [c for c in df.columns if 'count' in c.lower() and 'desc' not in c.lower()][0]
-
-    # Broadened search: Just look for 'Total' and 'Accident'
-    mask = (
-        (df[col_strata].str.contains('Total', case=False, na=False)) & 
-        (df[col_cause].str.contains('Accident', case=False, na=False)) &
-        (df[col_county].str.lower() != 'california')
-    )
-    df_filtered = df[mask].copy()
-    
-    print(f"Rows found for this file: {len(df_filtered)}") # This will show in your GitHub log
-    
-    df_filtered = df_filtered[[col_county, col_year, col_count]]
-    df_filtered.columns = ['County', 'Year', 'Count']
-    df_filtered['Count'] = pd.to_numeric(df_filtered['Count'], errors='coerce')
-    return df_filtered
-
 def update_map():
-    processed_dfs = []
+    all_data = []
+    
     for url in URLS:
+        print(f"Reading data from: {url}")
         r = requests.get(url)
+        # Use low_memory=False to stop the pandas mixed-type warnings seen in previous logs
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
-        processed_dfs.append(clean_and_filter(df))
+        
+        # Clean up column names just in case there are leading/trailing spaces
+        df.columns = [c.strip() for c in df.columns]
 
-    combined = pd.concat(processed_dfs)
-    combined = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
-    combined = combined[combined['Year'] >= 2021].copy()
-    
-    combined['Population'] = combined['County'].map(POPS)
-    combined['Death Rate'] = (combined['Count'] / combined['Population'] * 100000).round(2)
-    
-    final_output = combined[['County', 'Year', 'Death Rate', 'Count']]
-    final_output['Year'] = final_output['Year'].astype(str)
+        # Apply your exact filters
+        # Note: We use .str.strip() on the values too to ensure a perfect match
+        mask = (
+            (df['Strata'].str.strip() == 'Total Population') & 
+            (df['Cause_Desc'].str.strip() == 'Accidents (unintentional injuries)')
+        )
+        filtered_df = df[mask].copy()
+        
+        print(f"Found {len(filtered_df)} rows in this file.")
+        all_data.append(filtered_df)
 
-    # Standard Datawrapper handshake
+    # Combine the data
+    combined = pd.concat(all_data)
+    
+    # Ensure columns are standardized
+    combined = combined[['County', 'Year', 'Count']]
+    combined['Count'] = pd.to_numeric(combined['Count'], errors='coerce')
+    
+    # Sum up counts by County and Year (especially important for provisional monthly data)
+    final = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
+    
+    # Filter for 2021+ as requested
+    final = final[final['Year'] >= 2021].copy()
+    
+    # Calculate Death Rate
+    final['Population'] = final['County'].map(POPS)
+    final['Death Rate'] = (final['Count'] / final['Population'] * 100000).round(2)
+    
+    # Drop rows without population (like 'California' total)
+    final = final.dropna(subset=['Population'])
+    
+    # Final data for Datawrapper
+    output = final[['County', 'Year', 'Death Rate', 'Count']]
+    output['Year'] = output['Year'].astype(str)
+
+    # Standard upload and publish
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
-    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=final_output.to_csv(index=False))
+    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=output.to_csv(index=False))
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
-    print(f"🚀 Final row count sent to Datawrapper: {len(final_output)}")
+    
+    print(f"🚀 Success! Sent {len(output)} rows to Datawrapper.")
 
 if __name__ == "__main__":
     update_map()
