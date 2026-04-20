@@ -6,9 +6,17 @@ import os
 # --- CONFIGURATION ---
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
 CHART_ID = "bodZ9"
-DATA_URL = "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/2026-03_deaths_provisional_county_month_sup.csv"
 
-# California County Populations (2023/24 Estimates)
+# California State Portal IDs for each year's provisional death data
+URLS = {
+    2021: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/6645396b-285b-4c2c-8833-2fa64757523f/download/2021-12_deaths_provisional_county_month_sup.csv",
+    2022: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/79704207-6819-48ed-a261-26c71f9f2579/download/2022-12_deaths_provisional_county_month_sup.csv",
+    2023: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/c444053d-2495-4670-bc62-094ec601d331/download/2023-12_deaths_provisional_county_month_sup.csv",
+    2024: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/7141887e-d476-46c9-9403-16279f57876a/download/2024-12_deaths_provisional_county_month_sup.csv",
+    2025: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/7141887e-d476-46c9-9403-16279f57876a/download/2025-12_deaths_provisional_county_month_sup.csv",
+    2026: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/2e546f88-bba8-4d77-846a-7fb77846cac6/download/2026-03_deaths_provisional_county_month_sup.csv"
+}
+
 POPS = {
     'Alameda': 1628997, 'Alpine': 1159, 'Amador': 41412, 'Butte': 207183, 'Calaveras': 46332,
     'Colusa': 22036, 'Contra Costa': 1155025, 'Del Norte': 27082, 'El Dorado': 193221,
@@ -25,48 +33,45 @@ POPS = {
 }
 
 def update_map():
-    try:
-        print("Fetching data...")
-        r = requests.get(DATA_URL)
-        df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip')
+    all_years_data = []
 
-        # 1. Filter and Clean
-        mask = (df['Cause_Desc'].str.contains('Accidents', case=False, na=False)) & (df['County'] != 'California')
-        filtered_df = df[mask].copy()
-        filtered_df['Count'] = pd.to_numeric(filtered_df['Count'], errors='coerce').fillna(0)
-        
-        # 2. Group by County
-        map_data = filtered_df.groupby('County')['Count'].sum().reset_index()
-        
-        # 3. Calculate Rate per 100k
-        map_data['Population'] = map_data['County'].map(POPS)
-        map_data['Rate'] = (map_data['Count'] / map_data['Population']) * 100000
-        map_data['Rate'] = map_data['Rate'].round(2) # Round to 2 decimal places
+    for year, url in URLS.items():
+        try:
+            print(f"Processing {year}...")
+            r = requests.get(url)
+            df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip')
 
-        # Prepare final dataframe for Datawrapper
-        final_dw_data = map_data[['County', 'Rate', 'Count']]
-        final_dw_data.columns = ['County', 'Death Rate (per 100k)', 'Total Deaths']
+            mask = (df['Cause_Desc'].str.contains('Accidents', case=False, na=False)) & (df['County'] != 'California')
+            filtered_df = df[mask].copy()
+            filtered_df['Count'] = pd.to_numeric(filtered_df['Count'], errors='coerce')
+            
+            # Using min_count=1 ensures that if all months are "S", we get NaN instead of 0
+            yearly_sum = filtered_df.groupby('County')['Count'].sum(min_count=1).reset_index()
+            yearly_sum['Year'] = year
+            all_years_data.append(yearly_sum)
+        except Exception as e:
+            print(f"Warning: Could not process {year}: {e}")
 
-        print(f"✅ Calculation complete. Max rate found: {final_dw_data['Death Rate (per 100k)'].max()}")
+    final_df = pd.concat(all_years_data)
+    final_df['Population'] = final_df['County'].map(POPS)
+    final_df['Rate'] = (final_df['Count'] / final_df['Population']) * 100000
+    final_df['Rate'] = final_df['Rate'].round(2)
 
-        # 4. Upload & Publish
-        headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-        
-        # Reset source type
-        requests.patch(f"https://api.datawrapper.de/v3/charts/{CHART_ID}", headers=headers, json={"metadata": {"data": {"source-type": "uploaded-csv"}}})
+    export_df = final_df[['County', 'Year', 'Rate', 'Count']]
+    export_df.columns = ['County', 'Year', 'Death Rate', 'Total Deaths']
 
-        # Upload CSV
-        requests.put(
-            f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data",
-            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"},
-            data=final_dw_data.to_csv(index=False)
-        )
-
-        requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
-        print("🚀 Success! Rate-based map published.")
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    # --- UPLOAD ---
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    # Push Data
+    csv_data = export_df.to_csv(index=False)
+    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
+                 headers={**headers, "Content-Type": "text/csv"}, 
+                 data=csv_data)
+    
+    # Publish
+    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
+    print("🚀 All years from 2021-2026 updated!")
 
 if __name__ == "__main__":
     update_map()
