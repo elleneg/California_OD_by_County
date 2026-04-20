@@ -5,7 +5,7 @@ import os
 
 # --- CONFIGURATION ---
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "PASTE_YOUR_NEW_CHART_ID_HERE" # Update this!
+CHART_ID = "YQOtv" # Update this!
 
 URLS = {
     2021: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/6645396b-285b-4c2c-8833-2fa64757523f/download/2021-12_deaths_provisional_county_month_sup.csv",
