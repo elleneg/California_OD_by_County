@@ -16,57 +16,52 @@ POPS = {
 }
 
 def clean_and_filter(df):
-    # Strip spaces from column names to prevent hidden "KeyErrors"
-    df.columns = [c.strip() for c in df.columns]
+    df.columns = [str(c).strip() for c in df.columns]
     
-    # Use the names you identified: "Strata" and "Cause_Desc"
-    # We use a flexible check in case one file uses "Strata" and another uses "Gender"
-    col_strata = [c for c in df.columns if c.lower() in ['strata', 'gender', 'sex']][0]
+    # Identify columns by partial name match to avoid KeyErrors
+    col_strata = [c for c in df.columns if any(x in c.lower() for x in ['strata', 'gender', 'sex'])][0]
     col_cause = [c for c in df.columns if 'cause' in c.lower()][0]
     col_county = [c for c in df.columns if 'county' in c.lower()][0]
     col_year = [c for c in df.columns if 'year' in c.lower()][0]
     col_count = [c for c in df.columns if 'count' in c.lower() and 'desc' not in c.lower()][0]
 
+    # Broadened search: Just look for 'Total' and 'Accident'
     mask = (
-        (df[col_strata].str.contains('Total Population', case=False, na=False)) & 
-        (df[col_cause].str.contains('Accidents', case=False, na=False)) &
+        (df[col_strata].str.contains('Total', case=False, na=False)) & 
+        (df[col_cause].str.contains('Accident', case=False, na=False)) &
         (df[col_county].str.lower() != 'california')
     )
-    df = df[mask].copy()
+    df_filtered = df[mask].copy()
     
-    df = df[[col_county, col_year, col_count]]
-    df.columns = ['County', 'Year', 'Count']
-    df['Count'] = pd.to_numeric(df['Count'], errors='coerce')
-    return df
+    print(f"Rows found for this file: {len(df_filtered)}") # This will show in your GitHub log
+    
+    df_filtered = df_filtered[[col_county, col_year, col_count]]
+    df_filtered.columns = ['County', 'Year', 'Count']
+    df_filtered['Count'] = pd.to_numeric(df_filtered['Count'], errors='coerce')
+    return df_filtered
 
 def update_map():
     processed_dfs = []
     for url in URLS:
         r = requests.get(url)
-        # Handle mixed types and messy historical data
         df = pd.read_csv(io.StringIO(r.text), low_memory=False)
         processed_dfs.append(clean_and_filter(df))
 
     combined = pd.concat(processed_dfs)
-    
-    # Final grouping (sums provisional months into year totals)
     combined = combined.groupby(['County', 'Year'])['Count'].sum().reset_index()
-    
-    # Filter for 2021 and ongoing as requested
     combined = combined[combined['Year'] >= 2021].copy()
     
-    # Calculate Rates per 100k
     combined['Population'] = combined['County'].map(POPS)
     combined['Death Rate'] = (combined['Count'] / combined['Population'] * 100000).round(2)
     
     final_output = combined[['County', 'Year', 'Death Rate', 'Count']]
     final_output['Year'] = final_output['Year'].astype(str)
 
-    # Push to Datawrapper
+    # Standard Datawrapper handshake
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "text/csv"}
     requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", headers=headers, data=final_output.to_csv(index=False))
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers={"Authorization": f"Bearer {API_KEY}"})
-    print(f"🚀 Success! Your map is updated with your specific Strata filters.")
+    print(f"🚀 Final row count sent to Datawrapper: {len(final_output)}")
 
 if __name__ == "__main__":
     update_map()
