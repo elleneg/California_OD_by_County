@@ -5,7 +5,7 @@ import os
 
 # --- CONFIGURATION ---
 API_KEY = os.getenv("CAL_OD_DATAWRAPPER")
-CHART_ID = "YQOtv" # Update this!
+CHART_ID = "kF18a" # Keep the quotes!
 
 URLS = {
     2021: "https://data.chhs.ca.gov/dataset/58619b69-b3cb-41a7-8bfc-fc3a524a9dd4/resource/6645396b-285b-4c2c-8833-2fa64757523f/download/2021-12_deaths_provisional_county_month_sup.csv",
@@ -28,35 +28,41 @@ def update_map():
             r = requests.get(url)
             df = pd.read_csv(io.StringIO(r.text), on_bad_lines='skip', engine='python')
             
-            # Normalize column names (remove spaces, underscores, and make lowercase)
-            df.columns = [c.replace(' ', '_').lower() for c in df.columns]
+            # Find the columns dynamically by searching for keywords
+            col_cause = [c for c in df.columns if 'cause' in c.lower()][0]
+            col_county = [c for c in df.columns if 'county' in c.lower()][0]
+            col_count = [c for c in df.columns if 'count' in c.lower() and 'desc' not in c.lower()][0]
             
-            # Use the normalized 'cause_desc' and 'county'
-            mask = (df['cause_desc'].str.contains('Accidents', case=False, na=False)) & (df['county'] != 'California')
+            mask = (df[col_cause].str.contains('Accidents', case=False, na=False)) & (df[col_county] != 'California')
             filtered = df[mask].copy()
-            filtered['count'] = pd.to_numeric(filtered['count'], errors='coerce')
+            filtered['clean_count'] = pd.to_numeric(filtered[col_count], errors='coerce')
             
-            yearly = filtered.groupby('county')['count'].sum(min_count=1).reset_index()
+            yearly = filtered.groupby(col_county)['clean_count'].sum(min_count=1).reset_index()
+            yearly.columns = ['County', 'Count']
             yearly['Year'] = str(year)
             all_years_data.append(yearly)
+            print(f"✅ Successfully processed {year}")
         except Exception as e:
             print(f"❌ Failed year {year}: {e}")
 
+    if not all_years_data:
+        print("Error: No data was collected!")
+        return
+
     final_df = pd.concat(all_years_data)
-    final_df['Population'] = final_df['county'].map(POPS)
-    final_df['Rate'] = (final_df['count'] / final_df['Population']) * 100000
-    export_df = final_df[['county', 'Year', 'Rate', 'count']].round(2)
+    final_df['Population'] = final_df['County'].map(POPS)
+    final_df['Rate'] = (final_df['Count'] / final_df['Population']) * 100000
+    export_df = final_df[['County', 'Year', 'Rate', 'Count']].round(2)
     export_df.columns = ['County', 'Year', 'Death Rate', 'Total Deaths']
 
     headers = {"Authorization": f"Bearer {API_KEY}"}
     csv_data = export_df.to_csv(index=False)
     
-    # Upload to Datawrapper
     requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
                  headers={**headers, "Content-Type": "text/csv"}, data=csv_data)
     
     requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", headers=headers)
-    print("🚀 All years processed and synced to new chart!")
+    print("🚀 DONE! Check the new map.")
 
 if __name__ == "__main__":
     update_map()
