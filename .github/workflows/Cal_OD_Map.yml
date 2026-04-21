@@ -1,13 +1,12 @@
-name: CA_OD_WEEKLY_UPDATE
+name: Update CA Death Data to Google Sheets
 
 on:
   push:
     branches:
       - main
   schedule:
-    # This runs the script at 00:00 UTC every day
-    - cron: '0 0 * * *'
-  workflow_dispatch: # This allows you to run it manually for testing
+    - cron: '0 0 * * *' # Runs every night at midnight
+  workflow_dispatch: # Allows you to click "Run workflow" manually
 
 jobs:
   build:
@@ -25,15 +24,16 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests
+          pip install pandas requests gspread oauth2client
 
       - name: Run Data Script
         env:
-          CAL_OD_DATAWRAPPER: ${{ secrets.CAL_OD_DATAWRAPPER }}
-        run: python CA_OD_Code.py # IMPORTANT: Change this to your actual .py filename
+          # This links your GitHub Secret to the Python script
+          GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLESHEETS_CA_OD_MAP_JSON }}
+        run: python CA_OD_Code.py
 
-      - name: Upload CSV for Tableau
+      - name: Upload Backup CSV
         uses: actions/upload-artifact@v4
         with:
-          name: CA-Death-Data
-          path: CA_Death_Rates.csv # Matches the filename in your .to_csv() script
+          name: CA-Death-Data-Backup
+          path: CA_Death_Rates.csv
