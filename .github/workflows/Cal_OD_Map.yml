@@ -30,7 +30,7 @@ jobs:
       - name: Run Data Script
         env:
           CAL_OD_DATAWRAPPER: ${{ secrets.CAL_OD_DATAWRAPPER }}
-        run: python your_script_name.py # IMPORTANT: Change this to your actual .py filename
+        run: python CA_OD_Code.py # IMPORTANT: Change this to your actual .py filename
 
       - name: Upload CSV for Tableau
         uses: actions/upload-artifact@v4
