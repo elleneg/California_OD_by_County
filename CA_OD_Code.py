@@ -57,30 +57,10 @@ def update_map():
     summed = summed.dropna(subset=['Population'])
     summed = summed[summed['County'] != 'California']
 
-    # --- THE PIVOT STEP ---
-    # This turns the data from "Long" (rows for years) to "Wide" (columns for years)
-    # Resulting columns: [County, 2021, 2022, 2023, 2024, 2025, 2026]
-    final_pivot = summed.pivot(index='County', columns='Year', values='Death Rate')
-    final_pivot = final_pivot.reset_index()
-
-    # Push to Datawrapper
-    headers = {
-        "Authorization": f"Bearer {API_KEY}", 
-        "Content-Type": "text/csv"
-    }
+  # Use the 'summed' dataframe from your previous logic (before the pivot)
+    # This keeps it in 'Long Format': County, Year, Death Rate, Count
+    final_output = summed[['County', 'Year', 'Death Rate', 'Count']]
     
-    csv_data = final_pivot.to_csv(index=False)
-    
-    # Update data
-    requests.put(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/data", 
-                 headers=headers, 
-                 data=csv_data)
-    
-    # Publish chart
-    requests.post(f"https://api.datawrapper.de/v3/charts/{CHART_ID}/publish", 
-                  headers={"Authorization": f"Bearer {API_KEY}"})
-    
-    print(f"🚀 Success! Map updated. Columns available: {list(final_pivot.columns)}")
-
-if __name__ == "__main__":
-    update_map()
+    # Save this to a CSV file that you will connect to Tableau
+    final_output.to_csv("CA_Death_Rates.csv", index=False)
+    print("🚀 Data ready for Tableau!")
