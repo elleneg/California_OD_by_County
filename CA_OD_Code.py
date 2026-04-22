@@ -35,4 +35,5 @@ final.to_csv("CA_Death_Rates.csv", index=False)
 
 # 5. Connect to Google Sheets
 print("Connecting to Google Sheets...")
-scope = ["https://spreadsheets.google.com/feeds", "https://www
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds_json = os.environ.get('GOOGLE_SHEETS_JSON')
