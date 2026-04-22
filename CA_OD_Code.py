@@ -23,7 +23,7 @@ for url in URLS:
     df = pd.read_csv(io.StringIO(res.text), low_memory=False)
     df.columns = [c.strip() for c in df.columns]
     
-    mask = (df['Strata'] == 'Total Population') & (df['Cause_Desc'] == 'Accidents (unintentional injuries)')
+    mask = (df['Strata'] == 'Total Population') & (df['Cause_Desc'] == 'Drug Overdose')
     filtered = df[mask].copy()
     all_data.append(filtered[['County', 'Year', 'Count']])
 
