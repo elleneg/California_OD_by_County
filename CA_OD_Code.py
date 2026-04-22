@@ -37,3 +37,14 @@ final.to_csv("CA_Death_Rates.csv", index=False)
 print("Connecting to Google Sheets...")
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_json = os.environ.get('GOOGLE_SHEETS_JSON')
+creds_dict = json.loads(creds_json)
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+
+# 6. Upload
+sheet = client.open("CA_Death_Data").sheet1
+sheet.clear()
+data_to_upload = [final.columns.values.tolist()] + final.values.tolist()
+sheet.update('A1', data_to_upload)
+
+print("✅ SUCCESS: Overdose data updated!")
